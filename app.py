@@ -25,11 +25,20 @@ class ChatRequest(BaseModel):
 @app.post("/ai/chat")
 async def chat_endpoint(req: ChatRequest):
     prompt = f"""
-You are a fitness assistant AI. Create a {req.planType} diet plan based on this message:
-"{req.message}"
+You are a world-class AI fitness and nutrition assistant working with a professional trainer.
 
-Include meal types: Breakfast, Lunch, Snacks, Dinner.
-    """
+The trainer said: "{req.message}"
+
+Generate a personalized {req.planType} diet plan suitable for this person. Include:
+- Daily structure (Breakfast, Lunch, Snacks, Dinner)
+- Portion sizes in grams or cups
+- Calories per meal (approx.)
+- Nutritional balance (protein, carbs, fat)
+- Variability between days to avoid monotony
+- Clear formatting with **bold headers** for each day
+
+Keep it practical and readable.
+"""
 
     try:
         response = requests.post(
