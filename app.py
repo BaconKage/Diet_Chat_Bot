@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 # ✅ Load environment variables from .env
 load_dotenv()
-openai.api_key = os.getenv("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")
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # ✅ Initialize FastAPI app
 app = FastAPI()
