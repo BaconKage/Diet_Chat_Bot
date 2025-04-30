@@ -1,12 +1,12 @@
-import openai
 import os
+import requests
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 app = FastAPI()
 
@@ -25,19 +25,26 @@ class ChatRequest(BaseModel):
 @app.post("/ai/chat")
 async def chat_endpoint(req: ChatRequest):
     prompt = f"""
-You are a gym assistant AI. Generate a {req.planType} diet plan based on the following message:
+You are a fitness assistant AI. Create a {req.planType} diet plan based on this message:
 "{req.message}"
 
-Break it down by meals: Breakfast, Lunch, Snacks, Dinner. Make it practical and detailed.
-"""
+Include meal types: Breakfast, Lunch, Snacks, Dinner.
+    """
 
     try:
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "llama3-70b-8192",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7
+            }
         )
-        reply = response.choices[0].message.content
+        reply = response.json()["choices"][0]["message"]["content"]
         return {"reply": reply}
     except Exception as e:
         return {"error": str(e)}
