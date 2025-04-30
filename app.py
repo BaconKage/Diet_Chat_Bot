@@ -1,19 +1,27 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import openai
+import os
+from dotenv import load_dotenv
 
+# ✅ Load environment variables from .env
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# ✅ Initialize FastAPI app
 app = FastAPI()
 
-# CORS config (allow any origin for testing, tighten in production)
+# ✅ Enable CORS (open for now, restrict in production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # use ["https://yourdomain.com"] in prod
+    allow_origins=["*"],  # You can replace this with your frontend domain in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ Health check route for Render
+# ✅ Health check route
 @app.get("/")
 def read_root():
     return {"status": "FastAPI backend is live"}
@@ -21,20 +29,25 @@ def read_root():
 # ✅ Chat request schema
 class ChatRequest(BaseModel):
     message: str
-    planType: str  # e.g., "week", "month", "year"
+    planType: str  # e.g., "week", "month"
 
-# ✅ Chat endpoint
+# ✅ AI Chat Endpoint
 @app.post("/ai/chat")
 async def chat_endpoint(req: ChatRequest):
-    message = req.message.lower()
-    plan = req.planType.lower()
+    prompt = f"""
+You are a smart AI gym assistant. A trainer has asked for a {req.planType} diet plan.
+Message from the trainer: "{req.message}"
 
-    # Simple dummy logic (replace with real AI/gen logic)
-    if "fat loss" in message:
-        response = f"Here is your {plan} plan for fat loss: eat high-protein meals, reduce sugar, and do cardio 3x a week."
-    elif "muscle" in message:
-        response = f"Here is your {plan} plan for muscle gain: lift heavy 5x a week, eat in a calorie surplus, focus on compound lifts."
-    else:
-        response = f"Sorry, I couldn’t understand the goal in your message. Please try asking again more clearly."
+Generate a practical and healthy {req.planType} diet plan, broken down by day and meal type (Breakfast, Lunch, Snacks, Dinner). Ensure it aligns with standard fitness goals like muscle gain, fat loss, or maintenance depending on the message context.
+"""
 
-    return {"reply": response}
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7
+        )
+        reply = response['choices'][0]['message']['content']
+        return {"reply": reply}
+    except Exception as e:
+        return {"error": str(e)}
