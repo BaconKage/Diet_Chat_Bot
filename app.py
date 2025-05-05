@@ -1,15 +1,14 @@
-import os
-import requests
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from dotenv import load_dotenv
+import os
 
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 app = FastAPI()
 
+# Allow frontend + gateway to access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,37 +22,23 @@ class ChatRequest(BaseModel):
     planType: str
 
 @app.post("/ai/chat")
-async def chat_endpoint(req: ChatRequest):
-    prompt = f"""
-You are a world-class AI fitness and nutrition assistant working with a professional trainer.
+async def chat_endpoint(data: ChatRequest):
+    message = data.message
+    plan_type = data.planType.lower()
 
-The trainer said: "{req.message}"
+    # Simulated diet plan (replace this with actual LLM/Groq/OpenAI call)
+    reply = f"""
+🥗 Diet Plan ({plan_type.capitalize()}) for:
+📝 {message}
 
-Generate a personalized {req.planType} diet plan suitable for this person. Include:
-- Daily structure (Breakfast, Lunch, Snacks, Dinner)
-- Portion sizes in grams or cups
-- Calories per meal (approx.)
-- Nutritional balance (protein, carbs, fat)
-- Variability between days to avoid monotony
-- Clear formatting with **bold headers** for each day
+🍳 Breakfast: Oats with almond milk + banana
+🍽️ Lunch: Grilled tofu or paneer + brown rice + veggies
+🥤 Snack: Mixed nuts and green tea
+🍲 Dinner: Quinoa salad with chickpeas and spinach
+💧 Water: 3–4 liters daily
+🏋️‍♀️ Workout: 30 mins cardio + light weights
 
-Keep it practical and readable.
+🧘 Stay consistent and track your progress!
 """
 
-    try:
-        response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "llama3-70b-8192",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.7
-            }
-        )
-        reply = response.json()["choices"][0]["message"]["content"]
-        return {"reply": reply}
-    except Exception as e:
-        return {"error": str(e)}
+    return { "reply": reply }
