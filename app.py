@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
-import requests
+from pymongo import MongoClient
 
 load_dotenv()
 
@@ -23,47 +23,50 @@ class ChatRequest(BaseModel):
     message: str
     planType: str
 
-# Load Groq API config
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-MODEL_NAME = "llama3-8b-8192"
+# MongoDB connection
+MONGO_URI = os.getenv("MONGO_URI")
+client = MongoClient(MONGO_URI)
+foods_collection = client["my_gym"]["foods"]
 
-HEADERS = {
-    "Authorization": f"Bearer {GROQ_API_KEY}",
-    "Content-Type": "application/json"
-}
+# Food recommendation logic
+def recommend_foods(goal, diet_type):
+    query = {
+        "is_private": False,
+        "type": {"$regex": diet_type, "$options": "i"}
+    }
+    all_foods = list(foods_collection.find(query))
+
+    if goal.lower() == "lose fat":
+        sorted_foods = sorted(all_foods, key=lambda x: float(x.get("cals", "0")))
+    elif goal.lower() == "gain muscle":
+        sorted_foods = sorted(all_foods, key=lambda x: float(x.get("protein", "0")), reverse=True)
+    elif goal.lower() == "stay fit":
+        sorted_foods = sorted(all_foods, key=lambda x: abs(float(x.get("cals", "0")) - 300))
+    else:
+        sorted_foods = all_foods
+
+    return sorted_foods[:5]  # Top 5
 
 @app.post("/ai/chat")
 async def chat_endpoint(data: ChatRequest):
-    system_prompt = (
-        f"You are a certified AI nutritionist. Based on the user's profile, "
-        f"generate a personalized {data.planType.lower()} diet plan. "
-        f"Only return the diet plan directly, and do not include the prompt or user profile in the response. "
-        f"Focus on meals, hydration, workouts, and one motivational tip. Use emoji bullets for each item."
-    )
-
     try:
-        response = requests.post(
-            GROQ_API_URL,
-            headers=HEADERS,
-            json={
-                "model": MODEL_NAME,
-                "messages": [
-                    { "role": "system", "content": system_prompt },
-                    { "role": "user", "content": data.message }
-                ]
-            }
-        )
-        result = response.json()
+        # Extract basic keywords from message (basic fallback, better if parsed from structured data)
+        text = data.message.lower()
+        goal = "gain muscle" if "gain" in text else "lose fat" if "lose" in text else "stay fit"
+        diet_type = "vegetarian" if "vegetarian" in text else "non-vegetarian" if "non" in text else "vegan"
 
-        # Extract reply
-        reply = result["choices"][0]["message"]["content"].strip()
+        foods = recommend_foods(goal, diet_type)
 
-        # Defensive check: reply must not contain prompt phrases
-        if "Client Profile" in reply or "you are a certified" in reply.lower():
-            return { "error": "Unexpected response format from AI." }
+        if not foods:
+            return {"reply": "No matching foods found in the database."}
 
-        return { "reply": reply }
+        plan = f"🍽️ {data.planType.capitalize()} Diet Plan for Goal: {goal.title()}\n\n"
+        for food in foods:
+            plan += f"✅ {food['name']} — {food['cals']} kcal, {food['protein']}g protein, {food.get('carbs', 'N/A')}g carbs\n"
+
+        plan += "\n💧 Stay hydrated and aim for consistency!"
+
+        return {"reply": plan}
 
     except Exception as e:
-        return { "error": str(e) }
+        return {"error": str(e)}
