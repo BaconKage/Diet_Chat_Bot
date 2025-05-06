@@ -11,7 +11,7 @@ load_dotenv()
 
 app = FastAPI()
 
-# Enable CORS (adjust for production later)
+# CORS Middleware (Open for development; restrict in production)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,10 +20,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request schema
-class ChatRequest(BaseModel):
-    message: str
-    planType: str
+# MongoDB connection for foods
+FOOD_DB_URI = os.getenv("FOOD_DB_URI")
+client = MongoClient(FOOD_DB_URI)
+food_collection = client["my_gym"]["foods"]
 
 # Groq API setup
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -35,47 +35,44 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# MongoDB setup for foods
-FOOD_DB_URI = os.getenv("FOOD_DB_URI")
-client = MongoClient(FOOD_DB_URI)
-food_collection = client["my_gym"]["foods"]
+# Request schema
+class ChatRequest(BaseModel):
+    message: str
+    planType: str
 
-# 🥦 Helper: Get allowed foods from DB
+# Fetch allowed food names based on type
 def get_allowed_foods(diet_type: str):
     allowed_types = [diet_type.capitalize()]
     if diet_type.lower() != "non-vegetarian":
-        allowed_types.append("Vegetarian")
+        allowed_types.append("Vegetarian")  # Vegetarians & vegans overlap
     foods = food_collection.find({ "type": { "$in": allowed_types } })
-    return [food["name"] for food in foods]
+    return [item["name"] for item in foods]
 
-# 📬 POST /ai/chat
 @app.post("/ai/chat")
 async def chat_endpoint(data: ChatRequest):
     try:
         user_prompt = data.message
         plan_type = data.planType.lower()
 
-        # Guess diet type from message
+        # Guess diet type from user input (default to vegetarian)
+        diet_type = "vegetarian"
         if "non-vegetarian" in user_prompt.lower():
             diet_type = "non-vegetarian"
         elif "vegan" in user_prompt.lower():
             diet_type = "vegan"
-        else:
-            diet_type = "vegetarian"
 
-        # Get food list from DB
+        # Get food list from MongoDB
         allowed_foods = get_allowed_foods(diet_type)
-        food_list = "\n".join(f"- {food}" for food in allowed_foods[:100])
+        food_list = "\n".join([f"- {food}" for food in allowed_foods[:100]])  # limit to 100
 
-        # Build Groq system prompt
         system_prompt = (
-            f"You are a certified AI nutritionist. Generate a {plan_type} diet plan. "
-            f"Only use these foods:\n{food_list}\n\n"
-            f"Include: 3 meals + 2 snacks daily, hydration tips, and a motivational note. Use emojis for bullets. "
-            f"DO NOT include user profile or repeat the food list."
+            f"You are a certified AI nutritionist. Only use the following foods in the meal plan:\n\n"
+            f"{food_list}\n\n"
+            f"Now, based on the user's profile, create a personalized {plan_type} diet plan. "
+            f"Include 3 meals, 2 snacks daily, hydration advice, supplements, and one motivational tip. "
+            f"⚠️ Do NOT use ingredients outside this list."
         )
 
-        # Call Groq
         response = requests.post(
             GROQ_API_URL,
             headers=HEADERS,
@@ -91,8 +88,9 @@ async def chat_endpoint(data: ChatRequest):
         result = response.json()
         reply = result["choices"][0]["message"]["content"].strip()
 
-        if not reply or "you are a certified" in reply.lower():
-            return { "error": "Invalid AI response." }
+        # Validate AI reply
+        if any(x in reply.lower() for x in ["client profile", "you are a certified"]):
+            return { "error": "Unexpected AI response format." }
 
         return { "reply": reply }
 
