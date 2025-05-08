@@ -69,15 +69,20 @@ async def auto_generate_diet(data: PlanRequest):
         diet_type = user.get("diet_type", "vegetarian").lower()
 
         allowed_foods = get_allowed_foods(diet_type)
-        food_list = "\n".join([f"- {food}" for food in allowed_foods[:100]])
+        food_list = ", ".join([f'"{food}"' for food in allowed_food_names])
+
 
         # Prompt to AI
-        system_prompt = (
-            f"You are a certified AI nutritionist. Generate a {data.planType} diet plan for the following:\n"
-            f"- Age: {age}\n- Gender: {gender}\n- BMI: {BMI}\n- Goal: {goal}\n- Diet Type: {diet_type}\n\n"
-            f"⚠️ ONLY use foods from this list:\n{food_list}\n\n"
-            f"Structure: 3 meals + 2 snacks/day, hydration, supplement tips & motivation. Use emoji bullets."
-        )
+system_prompt = (
+    f"You are a certified AI nutritionist.\n"
+    f"Your job is to generate a strict {plan_type} diet plan using ONLY the food items listed below.\n"
+    f"⚠️ You are NOT allowed to invent or assume foods not in this list.\n"
+    f"The allowed foods are: {food_list}\n\n"
+    f"Design a 7-day meal plan with 3 meals and 2 snacks per day.\n"
+    f"Include hydration, supplements (if needed), and a motivational quote.\n"
+    f"Use bullet points and emojis to keep it engaging."
+)
+
 
         # Call GROQ
         response = requests.post(
