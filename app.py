@@ -62,27 +62,26 @@ async def auto_generate_diet(data: PlanRequest):
         if not user:
             return { "error": "User not found in database." }
 
-        age = user.get("age", 30)  # fallback if not present
+        age = user.get("age", 30)
         gender = user.get("gender", "male")
         BMI = user.get("BMI", 22.0)
         goal = user.get("goal", "stay fit")
         diet_type = user.get("diet_type", "vegetarian").lower()
 
         allowed_foods = get_allowed_foods(diet_type)
-        food_list = ", ".join([f'"{food}"' for food in allowed_food_names])
-
+        food_list = ", ".join([f'"{food}"' for food in allowed_foods])
+        plan_type = data.planType
 
         # Prompt to AI
-system_prompt = (
-    f"You are a certified AI nutritionist.\n"
-    f"Your job is to generate a strict {plan_type} diet plan using ONLY the food items listed below.\n"
-    f"⚠️ You are NOT allowed to invent or assume foods not in this list.\n"
-    f"The allowed foods are: {food_list}\n\n"
-    f"Design a 7-day meal plan with 3 meals and 2 snacks per day.\n"
-    f"Include hydration, supplements (if needed), and a motivational quote.\n"
-    f"Use bullet points and emojis to keep it engaging."
-)
-
+        system_prompt = (
+            f"You are a certified AI nutritionist.\n"
+            f"Your job is to generate a strict {plan_type} diet plan using ONLY the food items listed below.\n"
+            f"⚠️ You are NOT allowed to invent or assume foods not in this list.\n"
+            f"The allowed foods are: {food_list}\n\n"
+            f"Design a 7-day meal plan with 3 meals and 2 snacks per day.\n"
+            f"Include hydration, supplements (if needed), and a motivational quote.\n"
+            f"Use bullet points and emojis to keep it engaging."
+        )
 
         # Call GROQ
         response = requests.post(
