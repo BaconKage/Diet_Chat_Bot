@@ -5,13 +5,15 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 import os
 import requests
+from datetime import datetime
+from bson import ObjectId
 
 # Load environment variables
 load_dotenv()
 
 app = FastAPI()
 
-# CORS Middleware (Open for development; restrict in production)
+# Enable CORS for development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,12 +22,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# MongoDB connection for foods
-FOOD_DB_URI = os.getenv("FOOD_DB_URI")
-client = MongoClient(FOOD_DB_URI)
-food_collection = client["my_gym"]["foods"]
+# Request schema
+class ChatRequest(BaseModel):
+    message: str
+    planType: str
+    userId: str  # client _id for mealPlans
+    trainerId: str  # trainer _id for mealPlans
 
-# Groq API setup
+# Groq API configuration
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "llama3-8b-8192"
@@ -35,18 +39,21 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Request schema
-class ChatRequest(BaseModel):
-    message: str
-    planType: str
+# MongoDB Setup
+FOOD_DB_URI = os.getenv("FOOD_DB_URI")
+client = MongoClient(FOOD_DB_URI)
+db = client["my_gym"]
+foods_collection = db["foods"]
+mealplans_collection = db["mealplans"]
+meals_collection = db["meals"]
 
-# Fetch allowed food names based on type
+# Get allowed foods by diet type
 def get_allowed_foods(diet_type: str):
     allowed_types = [diet_type.capitalize()]
     if diet_type.lower() != "non-vegetarian":
-        allowed_types.append("Vegetarian")  # Vegetarians & vegans overlap
-    foods = food_collection.find({ "type": { "$in": allowed_types } })
-    return [item["name"] for item in foods]
+        allowed_types.append("Vegetarian")
+    foods = foods_collection.find({"type": {"$in": allowed_types}})
+    return list(foods)
 
 @app.post("/ai/chat")
 async def chat_endpoint(data: ChatRequest):
@@ -54,23 +61,21 @@ async def chat_endpoint(data: ChatRequest):
         user_prompt = data.message
         plan_type = data.planType.lower()
 
-        # Guess diet type from user input (default to vegetarian)
+        # Detect diet type from prompt
         diet_type = "vegetarian"
         if "non-vegetarian" in user_prompt.lower():
             diet_type = "non-vegetarian"
         elif "vegan" in user_prompt.lower():
             diet_type = "vegan"
 
-        # Get food list from MongoDB
-        allowed_foods = get_allowed_foods(diet_type)
-        food_list = "\n".join([f"- {food}" for food in allowed_foods[:100]])  # limit to 100
+        allowed_food_docs = get_allowed_foods(diet_type)
+        allowed_food_names = [item["name"] for item in allowed_food_docs]
+        food_list = "\n".join([f"- {food}" for food in allowed_food_names[:100]])
 
         system_prompt = (
-            f"You are a certified AI nutritionist. Only use the following foods in the meal plan:\n\n"
-            f"{food_list}\n\n"
-            f"Now, based on the user's profile, create a personalized {plan_type} diet plan. "
-            f"Include 3 meals, 2 snacks daily, hydration advice, supplements, and one motivational tip. "
-            f"⚠️ Do NOT use ingredients outside this list."
+            f"You are a certified AI nutritionist. Based on the user's profile and goals, generate a {plan_type} diet plan.\n"
+            f"⚠️ ONLY use foods from this list:\n{food_list}\n\n"
+            f"Focus on 3 meals + 2 snacks daily, hydration tips, supplements, and one motivational note. Use emojis for each bullet."
         )
 
         response = requests.post(
@@ -79,8 +84,8 @@ async def chat_endpoint(data: ChatRequest):
             json={
                 "model": MODEL_NAME,
                 "messages": [
-                    { "role": "system", "content": system_prompt },
-                    { "role": "user", "content": user_prompt }
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
                 ]
             }
         )
@@ -88,11 +93,19 @@ async def chat_endpoint(data: ChatRequest):
         result = response.json()
         reply = result["choices"][0]["message"]["content"].strip()
 
-        # Validate AI reply
-        if any(x in reply.lower() for x in ["client profile", "you are a certified"]):
-            return { "error": "Unexpected AI response format." }
+        # Insert into mealPlans
+        plan_doc = {
+            "created_by": ObjectId(data.trainerId),
+            "created_for": ObjectId(data.userId),
+            "for_date": datetime.utcnow(),
+            "mealPlan": [reply],
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+            "deleted_at": None
+        }
 
-        return { "reply": reply }
+        mealplans_collection.insert_one(plan_doc)
+        return {"reply": reply}
 
     except Exception as e:
-        return { "error": str(e) }
+        return {"error": str(e)}
