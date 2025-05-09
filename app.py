@@ -1,21 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from dotenv import load_dotenv
 from pymongo import MongoClient
-import os
-import requests
-from datetime import datetime
 from bson import ObjectId
-from collections import defaultdict
-import re
+from dotenv import load_dotenv
+from datetime import datetime
+import requests
+import os
 
 # Load environment variables
 load_dotenv()
 
+# FastAPI setup
 app = FastAPI()
-
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,16 +21,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# MongoDB config
+# MongoDB setup
 MONGO_URI = os.getenv("FOOD_DB_URI")
 client = MongoClient(MONGO_URI)
 db = client["my_gym"]
 users_collection = db["users"]
 foods_collection = db["foods"]
-meals_collection = db["meals"]
 mealplans_collection = db["mealplans"]
+meals_collection = db["meals"]
 
-# Groq API config
+# GROQ setup
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "llama3-8b-8192"
@@ -47,89 +44,90 @@ class PlanRequest(BaseModel):
     userId: str
     planType: str
 
-# Match foods from MongoDB
-def get_allowed_foods(diet_type):
-    allowed_types = [diet_type.capitalize()]
-    if diet_type.lower() != "non-vegetarian":
-        allowed_types.append("Vegetarian")
-    return list(foods_collection.find({"type": {"$in": allowed_types}}))
-
-def match_foods(text, foods):
+# Helper to match foods
+def match_foods(ai_text, food_docs):
     matched = []
-    food_lookup = {f["name"].lower(): f for f in foods}
-    for name in food_lookup:
-        if re.search(rf"\b{re.escape(name)}\b", text.lower()):
-            matched.append(food_lookup[name])
+    for food in food_docs:
+        if food["name"].lower() in ai_text.lower():
+            matched.append({
+                "food": food["_id"],
+                "serving": 0,
+                "details": {
+                    "protein": food.get("protein", ""),
+                    "weight": food.get("weight", ""),
+                    "cals": food.get("cals", ""),
+                    "carbs": food.get("carbs", ""),
+                    "zinc": food.get("zinc", ""),
+                    "iron": food.get("iron", ""),
+                    "magnesium": food.get("magnesium", ""),
+                    "sulphur": food.get("sulphur", ""),
+                    "fats": food.get("fats", ""),
+                    "others": food.get("others", "")
+                },
+                "completed": False
+            })
     return matched
 
-def build_mealPlan_structure(foods, meal_docs):
-    meals_by_id = defaultdict(list)
-    for food in foods:
-        food_name = food["name"].lower()
-        for meal in meal_docs:
-            if meal["name"].lower() in food_name:
-                meals_by_id[str(meal["_id"])].append({
-                    "food": food["_id"],
-                    "serving": 0,
-                    "completed": False,
-                    "details": {
-                        "protein": food.get("protein", ""),
-                        "weight": food.get("weight", ""),
-                        "cals": food.get("cals", ""),
-                        "carbs": food.get("carbs", ""),
-                        "others": food.get("others", "")
-                    }
-                })
-    return [
-        {
-            "meals": ObjectId(meal_id),
-            "foodsList": items
-        }
-        for meal_id, items in meals_by_id.items()
-    ]
-
 @app.post("/ai/auto-plan")
-async def generate_diet_plan(data: PlanRequest):
+async def auto_generate_diet(data: PlanRequest):
     try:
         user = users_collection.find_one({ "_id": ObjectId(data.userId) })
         if not user:
-            return { "error": "User not found" }
+            return { "error": "User not found in DB." }
 
+        # Pull user profile info
         age = user.get("age", 30)
         gender = user.get("gender", "male")
         bmi = user.get("BMI", 22.0)
         goal = user.get("goal", "stay fit")
-        diet_type = user.get("diet_type", "vegetarian")
+        diet_type = user.get("diet_type", "vegetarian").lower()
 
-        foods = get_allowed_foods(diet_type)
-        food_list = "\n".join(f"- {f['name']}" for f in foods)
+        # Filter allowed foods
+        types = [diet_type.capitalize()]
+        if diet_type != "non-vegetarian":
+            types.append("Vegetarian")
+        foods = list(foods_collection.find({ "type": { "$in": types } }))
+        food_names = [f["name"] for f in foods]
+        food_list = "\n".join([f"- {f}" for f in food_names])
 
+        # Generate prompt
         system_prompt = (
             f"You are a certified AI nutritionist.\n"
-            f"Generate a {data.planType} vegetarian diet plan for a {age}-year-old {gender} with BMI {bmi} and goal '{goal}'.\n"
-            f"⚠️ Use ONLY foods from this list:\n{food_list}\n"
-            f"Design a weekly meal plan with 3 meals and 2 snacks per day, hydration advice, and a motivational tip."
+            f"Create a {data.planType} meal plan using ONLY the foods below:\n"
+            f"{food_list}\n\n"
+            f"❗ Do NOT use items not listed.\n"
+            f"Include 3 meals and 2 snacks per day.\n"
+            f"Format must mention meal names clearly (e.g. Breakfast, Lunch, Snack).\n"
+            f"Use emojis and bullet points to keep it engaging.\n"
         )
 
+        # AI call
         response = requests.post(
             GROQ_API_URL,
             headers=HEADERS,
             json={
                 "model": MODEL_NAME,
                 "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": "Generate the diet plan."}
+                    { "role": "system", "content": system_prompt },
+                    { "role": "user", "content": "Generate my personalized diet plan." }
                 ]
             }
         )
+        ai_reply = response.json()["choices"][0]["message"]["content"]
 
-        result = response.json()
-        reply = result["choices"][0]["message"]["content"]
+        # Match food IDs to response
+        structured_plan = []
+        all_meals = list(meals_collection.find({}))
+        for meal in all_meals:
+            meal_name = meal.get("name", "").lower()
+            if meal_name in ai_reply.lower():
+                matched_foods = match_foods(ai_reply, foods)
+                structured_plan.append({
+                    "meals": meal["_id"],
+                    "foodsList": matched_foods
+                })
 
-        matched_foods = match_foods(reply, foods)
-        meal_docs = list(meals_collection.find({}))
-        structured_plan = build_mealPlan_structure(matched_foods, meal_docs)
-
+        # Insert into mealplans
         mealplans_collection.insert_one({
             "created_by": ObjectId(data.trainerId),
             "created_for": ObjectId(data.userId),
@@ -140,7 +138,11 @@ async def generate_diet_plan(data: PlanRequest):
             "deleted_at": None
         })
 
-        return { "reply": reply }
+        return {
+            "message": "Plan saved to database.",
+            "meals_matched": len(structured_plan),
+            "foods_used": sum(len(m["foodsList"]) for m in structured_plan)
+        }
 
     except Exception as e:
         return { "error": str(e) }
