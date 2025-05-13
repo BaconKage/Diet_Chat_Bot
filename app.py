@@ -18,7 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ Fix: Use environment variable without fallback to localhost
+# MongoDB connection
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
     raise Exception("MONGO_URI not set in environment variables!")
@@ -40,35 +40,44 @@ async def generate_plan(request: PlanRequest):
     user_id = request.userId
     plan_type = request.planType or "week"
 
+    # ✅ Allow regeneration: no blocking for existing plan
     meals = list(meals_collection.find())
     foods = list(foods_collection.find())
 
     if not meals or not foods:
         return {"error": "Missing meals or food entries in the database."}
 
+    used_food_ids = set()
     meal_plan = []
+
     for meal in meals:
-        selected_foods = random.sample(foods, min(3, len(foods)))
+        available_foods = [f for f in foods if str(f["_id"]) not in used_food_ids]
+        if not available_foods:
+            break  # no more foods to choose from
+
+        selected_foods = random.sample(available_foods, min(3, len(available_foods)))
         foods_list = []
+
         for food in selected_foods:
-            food_detail_id = ObjectId()
-            food_entry_id = ObjectId()
+            food_id_str = str(food["_id"])
+            used_food_ids.add(food_id_str)
+
             food_entry = {
-                "_id": food_entry_id,
+                "_id": ObjectId(),
                 "food": ObjectId(food["_id"]),
                 "serving": 1,
                 "details": {
-                    "_id": food_detail_id,
-                    "protein": food["details"].get("protein", ""),
-                    "weight": food["details"].get("weight", ""),
-                    "cals": food["details"].get("cals", ""),
-                    "carbs": food["details"].get("carbs", ""),
-                    "zinc": food["details"].get("zinc", ""),
-                    "iron": food["details"].get("iron", ""),
-                    "magnesium": food["details"].get("magnesium", ""),
-                    "sulphur": food["details"].get("sulphur", ""),
-                    "fats": food["details"].get("fats", ""),
-                    "others": food["details"].get("others", "")
+                    "_id": ObjectId(),
+                    "protein": food.get("protein", ""),
+                    "weight": food.get("weight", ""),
+                    "cals": food.get("cals", ""),
+                    "carbs": food.get("carbs", ""),
+                    "zinc": food.get("zinc", ""),
+                    "iron": food.get("iron", ""),
+                    "magnesium": food.get("magnesium", ""),
+                    "sulphur": food.get("sulphur", ""),
+                    "fats": food.get("fats", ""),
+                    "others": food.get("others", "")
                 },
                 "completed": False
             }
