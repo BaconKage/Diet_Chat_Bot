@@ -27,7 +27,7 @@ client = MongoClient(MONGO_URI)
 db = client["my_gym"]  # <- FIXED
 foods_collection = db["foods"]
 meals_collection = db["meals"]
-plans_collection = db["mealPlans"]
+plans_collection = db["mealplans"]
 
 
 class PlanRequest(BaseModel):
