@@ -18,7 +18,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+# ✅ Fix: Use environment variable without fallback to localhost
+MONGO_URI = os.getenv("MONGO_URI")
+if not MONGO_URI:
+    raise Exception("MONGO_URI not set in environment variables!")
+
 client = MongoClient(MONGO_URI)
 db = client["dietPlanner"]
 foods_collection = db["foods"]
