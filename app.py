@@ -2,11 +2,11 @@ from bson import ObjectId
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pymongo import MongoClient
 from pydantic import BaseModel
 from typing import Optional
 import random
 import os
+from motor.motor_asyncio import AsyncIOMotorClient
 
 app = FastAPI()
 
@@ -18,13 +18,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# MongoDB connection (Render/Atlas safe)
+# MongoDB connection
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
     raise Exception("MONGO_URI not set in environment variables!")
 
-client = MongoClient(MONGO_URI)
-db = client["my_gym"]  # Make sure this matches your database name exactly
+client = AsyncIOMotorClient(MONGO_URI)
+db = client["my_gym"]
 foods_collection = db["foods"]
 meals_collection = db["meals"]
 plans_collection = db["mealplans"]
@@ -40,8 +40,12 @@ async def generate_plan(request: PlanRequest):
     user_id = request.userId
     plan_type = request.planType or "week"
 
-    meals = list(meals_collection.find())
-    foods = list(foods_collection.find())
+    # Use async queries
+    meals_cursor = meals_collection.find()
+    meals = await meals_cursor.to_list(length=None)
+
+    foods_cursor = foods_collection.find()
+    foods = await foods_cursor.to_list(length=None)
 
     if not meals or not foods:
         return {"error": "Missing meals or food entries in the database."}
@@ -52,7 +56,7 @@ async def generate_plan(request: PlanRequest):
     for meal in meals:
         available_foods = [f for f in foods if str(f["_id"]) not in used_food_ids]
         if not available_foods:
-            break  # No more unique foods left
+            break
 
         selected_foods = random.sample(available_foods, min(3, len(available_foods)))
         foods_list = []
@@ -91,8 +95,7 @@ async def generate_plan(request: PlanRequest):
     now = datetime.utcnow()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # 🔁 Auto-increment __v per user per date
-    version = plans_collection.count_documents({
+    version = await plans_collection.count_documents({
         "created_for": ObjectId(user_id),
         "for_date": today
     }) + 1
@@ -108,5 +111,5 @@ async def generate_plan(request: PlanRequest):
         "__v": version
     }
 
-    result = plans_collection.insert_one(doc)
+    result = await plans_collection.insert_one(doc)
     return {"message": "Plan created successfully", "planId": str(result.inserted_id)}
