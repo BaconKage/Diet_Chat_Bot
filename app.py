@@ -18,17 +18,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# MongoDB connection
+# MongoDB connection (Render/Atlas safe)
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
     raise Exception("MONGO_URI not set in environment variables!")
 
 client = MongoClient(MONGO_URI)
-db = client["my_gym"]  # <- FIXED
+db = client["my_gym"]  # Make sure this matches your database name exactly
 foods_collection = db["foods"]
 meals_collection = db["meals"]
 plans_collection = db["mealplans"]
-
 
 class PlanRequest(BaseModel):
     trainerId: str
@@ -41,7 +40,6 @@ async def generate_plan(request: PlanRequest):
     user_id = request.userId
     plan_type = request.planType or "week"
 
-    # ✅ Allow regeneration: no blocking for existing plan
     meals = list(meals_collection.find())
     foods = list(foods_collection.find())
 
@@ -54,14 +52,13 @@ async def generate_plan(request: PlanRequest):
     for meal in meals:
         available_foods = [f for f in foods if str(f["_id"]) not in used_food_ids]
         if not available_foods:
-            break  # no more foods to choose from
+            break  # No more unique foods left
 
         selected_foods = random.sample(available_foods, min(3, len(available_foods)))
         foods_list = []
 
         for food in selected_foods:
-            food_id_str = str(food["_id"])
-            used_food_ids.add(food_id_str)
+            used_food_ids.add(str(food["_id"]))
 
             food_entry = {
                 "_id": ObjectId(),
@@ -82,6 +79,7 @@ async def generate_plan(request: PlanRequest):
                 },
                 "completed": False
             }
+
             foods_list.append(food_entry)
 
         meal_plan.append({
@@ -91,15 +89,23 @@ async def generate_plan(request: PlanRequest):
         })
 
     now = datetime.utcnow()
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # 🔁 Auto-increment __v per user per date
+    version = plans_collection.count_documents({
+        "created_for": ObjectId(user_id),
+        "for_date": today
+    }) + 1
+
     doc = {
-        "for_date": now.replace(hour=0, minute=0, second=0, microsecond=0),
+        "for_date": today,
         "created_by": ObjectId(trainer_id),
         "created_for": ObjectId(user_id),
         "deleted_at": None,
         "created_at": now,
         "updated_at": now,
         "mealPlan": meal_plan,
-        "__v": 1
+        "__v": version
     }
 
     result = plans_collection.insert_one(doc)
