@@ -24,10 +24,11 @@ if not MONGO_URI:
     raise Exception("MONGO_URI not set in environment variables!")
 
 client = MongoClient(MONGO_URI)
-db = client["dietPlanner"]
+db = client["my_gym"]  # <- FIXED
 foods_collection = db["foods"]
 meals_collection = db["meals"]
 plans_collection = db["mealPlans"]
+
 
 class PlanRequest(BaseModel):
     trainerId: str
